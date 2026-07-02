@@ -9,7 +9,10 @@
  * 不用 localStorage，因为 localStorage 会跨刷新保留，不符合需求。
  */
 
+import { DEFAULT_CHARACTER } from "./characters";
+
 let sessionLoggedIn = false;
+let sessionCharacterId: string = DEFAULT_CHARACTER.id;
 
 export function isSessionLoggedIn(): boolean {
   return sessionLoggedIn;
@@ -17,4 +20,14 @@ export function isSessionLoggedIn(): boolean {
 
 export function setSessionLoggedIn(value: boolean): void {
   sessionLoggedIn = value;
+}
+
+/** 获取当前登录的角色 ID（未登录时返回默认角色） */
+export function getSessionCharacterId(): string {
+  return sessionCharacterId;
+}
+
+/** 设置当前登录的角色 ID（登录成功时调用） */
+export function setSessionCharacterId(id: string): void {
+  sessionCharacterId = id;
 }

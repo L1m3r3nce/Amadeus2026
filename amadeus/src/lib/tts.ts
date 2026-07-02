@@ -1,3 +1,6 @@
+import { getSessionCharacterId } from "./auth";
+import { getCharacterById, DEFAULT_CHARACTER } from "./characters";
+
 const TTS_STORAGE_KEY = "amadeus_tts_config";
 const TTS_PROVIDER_STORAGE_KEY = "amadeus_tts_provider";
 const ALIYUN_KEY_STORAGE_KEY = "amadeus_aliyun_api_key";
@@ -10,8 +13,18 @@ const CUSTOM_TTS_STORAGE_KEY = "amadeus_custom_tts";
 const VOICE_SAMPLE_VERSION_KEY = "amadeus_voice_sample_version";
 const VOICE_SAMPLE_VERSION = "v3";
 // 克隆状态：记录是否已一键克隆，避免重复克隆（阿里云账号音色数量有限）
-const VOICE_CLONED_KEY = "amadeus_voice_cloned";
-const CLONED_VOICE_KEY = "amadeus_cloned_voice";
+// 按角色 ID 隔离：不同角色用不同音色，克隆状态分开存
+const VOICE_CLONED_KEY_PREFIX = "amadeus_voice_cloned_";
+const CLONED_VOICE_KEY_PREFIX = "amadeus_cloned_voice_";
+
+function getVoiceClonedKey(): string {
+  if (typeof window === "undefined") return VOICE_CLONED_KEY_PREFIX + DEFAULT_CHARACTER.id;
+  return VOICE_CLONED_KEY_PREFIX + getSessionCharacterId();
+}
+function getClonedVoiceKey(): string {
+  if (typeof window === "undefined") return CLONED_VOICE_KEY_PREFIX + DEFAULT_CHARACTER.id;
+  return CLONED_VOICE_KEY_PREFIX + getSessionCharacterId();
+}
 
 // 默认引擎改为 flash（v3.5-flash）：合成速度比 plus 快约 50%+，音质差异日常对话几乎无感
 // plus 是高质量慢速版，凌晨高峰期 TTS 延迟会被显著放大
@@ -150,51 +163,78 @@ export function saveCustomTTS(config: CustomTTSConfig) {
 /** 是否已经一键克隆过红莉栖音色（避免重复克隆） */
 export function isVoiceCloned(): boolean {
   if (typeof window === "undefined") return false;
-  return localStorage.getItem(VOICE_CLONED_KEY) === "1";
+  const key = getVoiceClonedKey();
+  if (localStorage.getItem(key) === "1") return true;
+  // 迁移：红莉栖角色，旧版用 amadeus_voice_cloned（无后缀）
+  if (key === VOICE_CLONED_KEY_PREFIX + DEFAULT_CHARACTER.id) {
+    const legacy = localStorage.getItem("amadeus_voice_cloned");
+    if (legacy === "1") {
+      localStorage.setItem(key, "1");
+      const legacyVoice = localStorage.getItem("amadeus_cloned_voice");
+      if (legacyVoice) localStorage.setItem(getClonedVoiceKey(), legacyVoice);
+      return true;
+    }
+  }
+  return false;
 }
 
 /** 标记已克隆 + 存克隆得到的音色名 */
 export function setVoiceCloned(voice: string) {
   if (typeof window === "undefined") return;
-  localStorage.setItem(VOICE_CLONED_KEY, "1");
-  localStorage.setItem(CLONED_VOICE_KEY, voice);
+  localStorage.setItem(getVoiceClonedKey(), "1");
+  localStorage.setItem(getClonedVoiceKey(), voice);
 }
 
 /** 清除克隆标记（让用户可以重新克隆） */
 export function clearVoiceCloned() {
   if (typeof window === "undefined") return;
-  localStorage.removeItem(VOICE_CLONED_KEY);
-  localStorage.removeItem(CLONED_VOICE_KEY);
+  localStorage.removeItem(getVoiceClonedKey());
+  localStorage.removeItem(getClonedVoiceKey());
 }
 
 /** 读取克隆得到的音色名（用于 qwen3-tts-vc 合成） */
 export function loadClonedVoice(): string {
   if (typeof window === "undefined") return "";
-  return localStorage.getItem(CLONED_VOICE_KEY) || "";
+  const key = getClonedVoiceKey();
+  const saved = localStorage.getItem(key);
+  if (saved) return saved;
+  // 迁移：红莉栖角色从旧版 key 复制
+  if (key === CLONED_VOICE_KEY_PREFIX + DEFAULT_CHARACTER.id) {
+    const legacy = localStorage.getItem("amadeus_cloned_voice");
+    if (legacy) {
+      localStorage.setItem(key, legacy);
+      return legacy;
+    }
+  }
+  return "";
 }
 
 /**
  * 调后端一键克隆红莉栖音色。
  * 成功返回 { voice }，失败抛 Error（message 是中文提示）。
  */
-export async function cloneKurisuVoice(apiKey: string): Promise<{ voice: string; fallbackMode: boolean }> {
+export async function cloneKurisuVoice(apiKey: string): Promise<{ voice: string; fallbackMode: boolean; sampleFile?: string; characterId?: string }> {
+  // 传当前角色 ID，后端按角色取对应的音色样本
+  const characterId = getSessionCharacterId();
   const res = await fetch("/api/tts/clone", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ apiKey }),
+    body: JSON.stringify({ apiKey, characterId }),
   });
   const data = await res.json();
   if (!res.ok || data.error) {
     throw new Error(data.error || `克隆失败（HTTP ${res.status}）`);
   }
-  return { voice: data.voice, fallbackMode: !!data.fallbackMode };
+  return { voice: data.voice, fallbackMode: !!data.fallbackMode, sampleFile: data.sampleFile, characterId: data.characterId };
 }
 
 // === 音色样本（兼容旧逻辑） ===
 
 export async function loadDefaultVoiceSample(): Promise<string | null> {
   try {
-    const res = await fetch("/voice_sample.mp3");
+    // 按当前角色取音色样本路径
+    const character = getCharacterById(getSessionCharacterId());
+    const res = await fetch(character.voiceSample);
     if (!res.ok) return null;
     const blob = await res.blob();
     return await new Promise<string>((resolve, reject) => {
@@ -296,11 +336,10 @@ export async function synthesizeSpeech(
   if (provider === "aliyun") {
     apiKey = loadAliyunAPIKey();
     voiceId = loadAliyunVoiceId();
-    // qwen3-tts-vc 引擎：用户没手填 voiceId 时，用一键克隆得到的音色名
-    // （克隆的音色绑定用户自己的账号，可以用；服务端默认音色是作者的，别人调不了）
-    if (engine === "qwen3-tts-vc" && !voiceId) {
+    // 没手填 voiceId 时，用一键克隆得到的音色名（所有引擎统一）
+    if (!voiceId) {
       voiceId = loadClonedVoice();
-      if (voiceId) console.log("[TTS] qwen3-tts-vc 使用克隆音色:", voiceId);
+      if (voiceId) console.log("[TTS] 使用克隆音色:", voiceId);
     }
   } else if (provider === "minimax") {
     apiKey = loadMiniMaxAPIKey();

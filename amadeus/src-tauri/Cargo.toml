@@ -1,7 +1,7 @@
 [package]
 name = "app"
-version = "1.0.0"
-description = "Amadeus - 牧濑红莉栖数字伴侣"
+version = "2.0.0"
+description = "Amadeus - 命运石之门数字伴侣（多角色）"
 authors = ["you"]
 license = ""
 repository = ""

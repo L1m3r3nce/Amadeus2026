@@ -15,6 +15,8 @@ import {
   cloneKurisuVoice, isVoiceCloned, setVoiceCloned, clearVoiceCloned, loadClonedVoice,
 } from "@/lib/tts";
 import { setSessionLoggedIn } from "@/lib/auth";
+import { getSessionCharacterId } from "@/lib/auth";
+import { getCharacterById } from "@/lib/characters";
 
 export interface ModelConfig {
   provider: string;
@@ -100,6 +102,9 @@ export default function Settings({ open, onClose, onSave }: SettingsProps) {
     minimax: false,
     custom: false,
   });
+  // 当前登录角色（用于动态显示角色名）
+  const character = getCharacterById(getSessionCharacterId());
+
   const [toast, setToast] = useState<string | null>(null);
   const [cloning, setCloning] = useState(false);
   const [voiceCloned, setVoiceClonedState] = useState(false);
@@ -478,33 +483,24 @@ export default function Settings({ open, onClose, onSave }: SettingsProps) {
                           const engine = e.target.value as TTSEngine;
                           setTTSEngine(engine);
                           saveTTSEngine(engine);
-                          const names: Record<string, string> = {
-                            "cosyvoice-v3.5-plus": "CosyVoice v3.5-plus",
-                            "cosyvoice-v3.5-flash": "CosyVoice v3.5-flash",
-                            "cosyvoice-v3-flash": "CosyVoice v3-flash",
-                            "cosyvoice-v3-plus": "CosyVoice v3-plus",
-                            "qwen3-tts-vc": "Qwen3-TTS-VC",
-                          };
                           notifyChange();
-                          showToast(`已切换到 ${names[engine] || engine}`);
+                          showToast(`已切换到 ${engine}`);
                         }}
                         className="w-full bg-zinc-800 border border-zinc-600 rounded-lg px-3 py-2 text-sm font-mono text-white"
                       >
-                        <option value="cosyvoice-v3.5-plus">CosyVoice v3.5-plus（最强，指令控制语气）</option>
-                        <option value="cosyvoice-v3.5-flash">CosyVoice v3.5-flash（快，指令控制语气）</option>
-                        <option value="cosyvoice-v3-flash">CosyVoice v3-flash（指令控制语气）</option>
-                        <option value="cosyvoice-v3-plus">CosyVoice v3-plus（默认语气）</option>
-                        <option value="qwen3-tts-vc">Qwen3-TTS-VC（千问语音）</option>
+                        <option value="qwen3-tts-vc">Qwen3-TTS-VC（推荐，支持一键克隆）</option>
+                        <option value="cosyvoice-v3.5-flash">CosyVoice v3.5-flash（需手动克隆填 ID）</option>
+                        <option value="cosyvoice-v3.5-plus">CosyVoice v3.5-plus（需手动克隆填 ID）</option>
                       </select>
-                      <p className="text-xs text-zinc-600 mt-1">"指令控制"会根据语境自动调节语气</p>
+                      <p className="text-xs text-zinc-600 mt-1">一键克隆的音色只能配合 Qwen3-TTS-VC 引擎。CosyVoice 需自行到阿里云控制台克隆并填入音色 ID。</p>
                     </div>
                     <div>
-                      <label className="block text-xs text-zinc-400 mb-1 font-mono">一键克隆红莉栖音色</label>
+                      <label className="block text-xs text-zinc-400 mb-1 font-mono">一键克隆{character.name}音色</label>
                       <div className="bg-zinc-800/50 border border-[#8C4F14] rounded-lg p-3">
                         <p className="text-xs text-zinc-400 mb-2 leading-relaxed">
                           {voiceCloned
                             ? `已克隆，音色名：${loadClonedVoice() || "（未知）"}。引擎已自动切到 Qwen3-TTS-VC。`
-                            : "内置红莉栖音色样本，填好上方 API Key 后点下方按钮，自动克隆到你的阿里云账号。无需手动去控制台操作。"}
+                            : `内置${character.name}音色样本，填好上方 API Key 后点下方按钮，自动克隆到你的阿里云账号。无需手动去控制台操作。`}
                         </p>
                         <div className="flex gap-2">
                           <button
@@ -515,7 +511,7 @@ export default function Settings({ open, onClose, onSave }: SettingsProps) {
                               setCloning(true);
                               try {
                                 showToast("正在克隆音色，约需 5-15 秒...");
-                                const { voice, fallbackMode } = await cloneKurisuVoice(key);
+                                const { voice, fallbackMode, sampleFile, characterId: clonedCharId } = await cloneKurisuVoice(key);
                                 setVoiceCloned(voice);
                                 setVoiceClonedState(true);
                                 // 自动切到 qwen3-tts-vc 引擎（克隆音色只能配合这个引擎）
@@ -526,8 +522,8 @@ export default function Settings({ open, onClose, onSave }: SettingsProps) {
                                 saveAliyunVoiceId("");
                                 notifyChange();
                                 showToast(fallbackMode
-                                  ? `克隆成功（降级模式）：${voice}。建议换更清晰的样本重试。`
-                                  : `克隆成功！音色名：${voice}。引擎已切到 Qwen3-TTS-VC。`);
+                                  ? `克隆成功（降级）：${voice} | 样本=${sampleFile} | 角色=${clonedCharId}`
+                                  : `克隆成功！${voice} | 样本=${sampleFile}`);
                               } catch (e) {
                                 showToast(`克隆失败：${e instanceof Error ? e.message : "未知错误"}`);
                               } finally {
@@ -585,7 +581,7 @@ export default function Settings({ open, onClose, onSave }: SettingsProps) {
                         </button>
                       </div>
                       <p className="text-xs text-zinc-600 mt-1">
-                        留空用一键克隆的音色。如想用 CosyVoice 引擎（音质更好），需自行到阿里云控制台用 public/voice_sample.mp3 克隆，把得到的 ID 填这里。
+                        留空用一键克隆的音色（推荐）。如想用 CosyVoice 引擎，需自行到阿里云控制台克隆音色后把 ID 填这里。
                       </p>
                     </div>
                   </>

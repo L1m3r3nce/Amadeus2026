@@ -21,7 +21,8 @@ import path from "path";
  */
 export async function POST(request: Request) {
   try {
-    const { apiKey: rawApiKey } = (await request.json()) as { apiKey: string };
+    const body = (await request.json()) as { apiKey: string; characterId?: string };
+    const { apiKey: rawApiKey } = body;
     const apiKey = (rawApiKey || "").trim();
 
     if (!apiKey) {
@@ -32,22 +33,47 @@ export async function POST(request: Request) {
     }
 
     // 1. 读取内置音色样本
-    const samplePath = path.join(process.cwd(), "public", "voice_sample.mp3");
-    if (!fs.existsSync(samplePath)) {
+    // 1. 读取内置音色样本（按角色 ID 取不同样本）
+    const { characterId } = body as { apiKey: string; characterId?: string };
+    // 角色到音色样本文件的映射
+    const voiceSamples: Record<string, string> = {
+      kurisu: "voice_sample.mp3",
+      maho: "voice_sample_maho.wav",
+      may: "voice_sample_may.wav",
+    };
+    const sampleFile = voiceSamples[characterId || "kurisu"] || "voice_sample.mp3";
+    // Next.js standalone 模式下 cwd 可能是 amadeus/ 目录，也可能是 standalone/
+    // 尝试两个路径，找到第一个存在的
+    const possiblePaths = [
+      path.join(process.cwd(), "public", sampleFile),
+      path.join(process.cwd(), "amadeus", "public", sampleFile),
+    ];
+    const samplePath = possiblePaths.find((p) => fs.existsSync(p));
+    if (!samplePath) {
       return NextResponse.json(
-        { error: "内置音色样本文件不存在（public/voice_sample.mp3）" },
+        { error: `内置音色样本文件不存在（public/${sampleFile}），尝试过: ${possiblePaths.join(", ")}` },
         { status: 500 }
       );
     }
     const audioBuffer = fs.readFileSync(samplePath);
     const base64 = audioBuffer.toString("base64");
-    const dataUrl = `data:audio/mpeg;base64,${base64}`;
-    console.log(`[TTS clone] 音色样本已读取: ${(audioBuffer.length / 1024).toFixed(1)}KB, base64 长度: ${base64.length}`);
+    // 根据文件类型设置正确的 MIME type
+    const mimeType = sampleFile.endsWith(".wav") ? "audio/wav" : "audio/mpeg";
+    const dataUrl = `data:${mimeType};base64,${base64}`;
+    console.log(`[TTS clone] 角色=${characterId}, 样本=${sampleFile}, 路径=${samplePath}, 大小=${(audioBuffer.length / 1024).toFixed(1)}KB`);
 
     // 2. 调阿里云 Qwen 声音复刻 API
     // 用 dashscope 默认域名（不需要 WorkspaceId 专属域名，通用）
     const cloneUrl = "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization";
     const t0 = Date.now();
+
+    // preferred_name 按角色区分，方便用户在阿里云控制台辨认
+    const preferredNames: Record<string, string> = {
+      kurisu: "amadeus_kurisu",
+      maho: "amadeus_maho",
+      may: "amadeus_may",
+    };
+    const preferredName = preferredNames[characterId || "kurisu"] || "amadeus_kurisu";
 
     const res = await fetch(cloneUrl, {
       method: "POST",
@@ -60,9 +86,9 @@ export async function POST(request: Request) {
         input: {
           action: "create",
           target_model: "qwen3-tts-vc-2026-01-22",
-          preferred_name: "amadeus_kurisu",
+          preferred_name: preferredName,
           audio: { data: dataUrl },
-          language: "ja", // 红莉栖音色样本是日语
+          language: "ja",
         },
       }),
     });
@@ -91,9 +117,11 @@ export async function POST(request: Request) {
       );
     }
 
-    console.log(`[TTS clone] 克隆成功! voice=${voice}`);
+    console.log(`[TTS clone] 克隆成功! voice=${voice}, 角色=${characterId}, 样本=${sampleFile}`);
     return NextResponse.json({
       voice,
+      sampleFile,
+      characterId: characterId || "kurisu",
       fallbackMode: data?.output?.fallback_mode || false,
       fallbackReason: data?.output?.fallback_reason || "",
     });

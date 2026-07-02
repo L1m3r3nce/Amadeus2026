@@ -3,7 +3,8 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import SpritePlayer from "./SpritePlayer";
-import { setSessionLoggedIn } from "@/lib/auth";
+import { setSessionLoggedIn, setSessionCharacterId } from "@/lib/auth";
+import { findCharacterByLogin, DEFAULT_CHARACTER, Character } from "@/lib/characters";
 
 /**
  * Amadeus 登录界面（复刻自 MAHO-Amadeus 项目的 login.vue）
@@ -58,15 +59,15 @@ export default function LoginForm() {
       setErrorMsg("请输入 PASSWORD");
       return;
     }
-    // 账号密码从环境变量读取（.env.local，不传 GitHub）
-    const loginUser = process.env.NEXT_PUBLIC_LOGIN_USER || "Amadeus";
-    const loginPass = process.env.NEXT_PUBLIC_LOGIN_PASS || "";
-    if (username.trim() !== loginUser || password.trim() !== loginPass) {
+    // 按账号密码查角色（支持多角色，每个角色不同账号密码）
+    const character = findCharacterByLogin(username, password);
+    if (!character) {
       setErrorMsg("USER ID 或 PASSWORD 错误");
       return;
     }
-    // 校验通过，存内存会话登录态
+    // 校验通过，存内存会话登录态 + 角色 ID
     setSessionLoggedIn(true);
+    setSessionCharacterId(character.id);
     router.push("/");
   };
 
@@ -77,7 +78,7 @@ export default function LoginForm() {
   return (
     <div
       style={{
-        backgroundImage: "url(/bgLogin.jpg)",
+        backgroundImage: `url(${DEFAULT_CHARACTER.bgLoginImage})`,
         backgroundSize: "cover",
         backgroundPosition: "center",
         backgroundRepeat: "no-repeat",
@@ -88,7 +89,7 @@ export default function LoginForm() {
         fontSize: `${BASE_FONT * scale}px`,
       }}
     >
-      <audio ref={bgmRef} src="/login.mp3" autoPlay loop />
+      <audio ref={bgmRef} src={DEFAULT_CHARACTER.bgm} autoPlay loop />
 
       {/* 顶部 Logo（SpritePlayer：6 行 7 列 38 帧） */}
       <div
@@ -101,7 +102,7 @@ export default function LoginForm() {
         }}
       >
         <SpritePlayer
-          src="/sprite_logo.png"
+          src={DEFAULT_CHARACTER.spriteLogo}
           rows={6}
           columns={7}
           fps={20}

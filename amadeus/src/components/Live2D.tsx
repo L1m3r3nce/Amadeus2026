@@ -275,6 +275,8 @@ export default function Live2D({ modelPath, width = 400, height = 600, onModelRe
           }
           core.setParameterValueById("ParamEyeROpen", eyeOpenValue);
           core.setParameterValueById("ParamEyeLOpen", eyeOpenValue);
+          // 兼容真帆模型：左眼参数叫 ParamEyeROpen2（非标准命名）
+          core.setParameterValueById("ParamEyeROpen2", eyeOpenValue);
 
           // ParamMouthForm：只在有表情或说话时覆盖；否则让 motion 自由控制
           if (si > 0.01) {

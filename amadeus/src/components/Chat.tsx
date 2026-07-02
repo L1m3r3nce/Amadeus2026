@@ -2,7 +2,6 @@
 
 import { useState, useRef, useEffect } from "react";
 import Settings, { loadModelConfig, ModelConfig } from "./Settings";
-import { loadPersonality } from "@/lib/personality";
 import { extractMemories, MemoryEntry } from "@/lib/memory";
 import { getProactiveMessage } from "@/lib/proactive";
 import { getActiveSession, updateSession, ensureDefaultSession, Session } from "@/lib/sessions";
@@ -18,6 +17,8 @@ import SpritePlayer from "./SpritePlayer";
 import getCaretCoordinates from "textarea-caret";
 import { parseMessage, getTTSText } from "@/lib/message-parser";
 import { dispatchEmotion } from "@/lib/emotion";
+import { getSessionCharacterId } from "@/lib/auth";
+import { getCharacterById } from "@/lib/characters";
 
 interface Message {
   role: "user" | "assistant";
@@ -29,6 +30,8 @@ interface Message {
 const MULTIMODAL_MODELS = ["mimo-v2.5", "gpt-4o", "gpt-4-turbo", "claude-sonnet-4-20250514", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"];
 
 export default function Chat() {
+  // 当前登录角色（组件挂载时读取一次，本会话不变）
+  const character = getCharacterById(getSessionCharacterId());
   const [messages, setMessages] = useState<Message[]>([]);
   const [memories, setMemories] = useState<MemoryEntry[]>([]);
   const [input, setInput] = useState("");
@@ -343,7 +346,7 @@ export default function Chat() {
         body: JSON.stringify({
           message: messageToSend,
           image: imageToSend,
-          personality: loadPersonality(),
+          personality: character.personality,
           history: recentMessages.map((m) => {
             if (m.imageUrl) {
               return {
@@ -473,24 +476,24 @@ export default function Chat() {
   };
 
   return (
-    <div className="relative h-screen w-screen text-white" style={{ backgroundImage: 'url(/bg.png)', backgroundSize: `${1920 * scale}px ${1080 * scale}px`, backgroundPosition: 'center', backgroundRepeat: 'no-repeat', backgroundColor: '#000', overflow: 'hidden' }}>
+    <div className="relative h-screen w-screen text-white" style={{ backgroundImage: `url(${character.bgImage})`, backgroundSize: `${1920 * scale}px ${1080 * scale}px`, backgroundPosition: 'center', backgroundRepeat: 'no-repeat', backgroundColor: '#000', overflow: 'hidden' }}>
       {/* 背景音乐：循环播放，切换会话或开关 BGM 时从头开始 */}
       <audio
         ref={(el) => { audioRef.current = el; }}
         key={`bgm-${activeSession?.id ?? "init"}`}
-        src="/login.mp3"
+        src={character.bgm}
         autoPlay
         loop
       />
 
       {/* 立绘全屏背景 */}
       <div className="absolute inset-0 flex items-end justify-center" style={{ paddingBottom: '0px' }}>
-        <Live2D modelPath="/live2d/kurisu/amadeusV1.model3.json" width={liveSize.width} height={liveSize.height} />
+        <Live2D modelPath={character.live2dPath} width={liveSize.width} height={liveSize.height} />
       </div>
 
       <header className="absolute top-0 left-0 right-0 p-4 flex items-center" style={{ zIndex: 30 }}>
         <SpritePlayer
-          src="/sprite_logo.png"
+          src={character.spriteLogo}
           rows={6}
           columns={7}
           fps={20}

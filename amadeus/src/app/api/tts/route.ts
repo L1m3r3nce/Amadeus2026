@@ -1,14 +1,6 @@
 import { NextResponse } from "next/server";
 
-// === 阿里云百炼：红莉栖克隆音色 ID ===
-const ALIYUN_VOICE_IDS: Record<string, string> = {
-  "cosyvoice-v3.5-plus": "cosyvoice-v3.5-plus-kurisu-51ce632eac1c464589e3ea631f7e2254",
-  "cosyvoice-v3.5-flash": "cosyvoice-v3.5-flash-kurisu-6d81ecf35c714af898327ffaa6199d22",
-  "cosyvoice-v3-flash": "cosyvoice-v3-flash-kurisu-ced4e6c62b584da09f4042afae43c388",
-  "cosyvoice-v3-plus": "cosyvoice-v3-plus-kurisu-7ad2af3f239d4b7ba323cb0731574bec",
-  "qwen3-tts-vc": "qwen-tts-vc-kurisu-voice-20260620040542662-e6e4",
-};
-
+// 阿里云 CosyVoice 指令控制支持的引擎（仅用于决定是否传 instruction）
 const ALIYUN_INSTRUCTION_SUPPORTED = new Set([
   "cosyvoice-v3.5-plus",
   "cosyvoice-v3.5-flash",
@@ -165,15 +157,15 @@ export async function POST(request: Request) {
 
     } else {
       // === 阿里云百炼 CosyVoice / Qwen-TTS ===
-      // 优先用用户在设置里填的音色 ID（克隆自用户自己的阿里云账号）
-      // 留空则用默认音色 ID（仅作者账号可用，其他账号调用会报错）
-      const userVid = (userVoiceId || "").trim();
-      const voiceId = userVid || ALIYUN_VOICE_IDS[engine];
-      if (userVid) {
-        console.log(`[TTS route] 使用用户自定义音色 ID: ${userVid.slice(0, 30)}...`);
-      } else {
-        console.log(`[TTS route] 使用默认音色 ID（仅作者账号可用）: ${voiceId?.slice(0, 30)}...`);
+      // voiceId 必须由前端提供（一键克隆或手填），不再有写死的默认音色
+      const voiceId = (userVoiceId || "").trim();
+      if (!voiceId) {
+        return NextResponse.json(
+          { error: "未配置音色。请点「一键克隆」克隆音色，或在音色 ID 框填入。" },
+          { status: 400 }
+        );
       }
+      console.log(`[TTS route] engine=${engine}, voiceId=${voiceId.slice(0, 40)}...`);
 
       if (engine === "qwen3-tts-vc") {
         // Qwen3-TTS-VC (声音复刻音色合成)

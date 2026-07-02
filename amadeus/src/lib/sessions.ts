@@ -1,5 +1,6 @@
 import { MemoryEntry } from "./memory";
-
+import { getSessionCharacterId } from "./auth";
+import { getRandomGreeting as getCharacterGreeting, DEFAULT_CHARACTER } from "./characters";
 export interface Message {
   role: "user" | "assistant";
   content: string;
@@ -17,44 +18,62 @@ export interface Session {
   memories: MemoryEntry[];
 }
 
-const SESSIONS_KEY = "amadeus_sessions";
-const ACTIVE_SESSION_KEY = "amadeus_active_session";
 const DEFAULT_SESSION_NAME = "默认会话";
 
-const GREETINGS = [
-  "（歪头）哦？你是谁？第一次见面呢...我是牧濑红莉栖的记忆体，你可以叫我Amadeus。你叫什么名字？\n===\n（首を傾げる）あら？誰？初めて会うね...牧瀬紅莉栖の記憶体よ、Amadeusって呼んでいいわ。あなたは？",
-  "（轻轻歪头）新用户？有意思...我是牧濑红莉栖的记忆体。你是来聊天的还是有事找我？\n===\n（首を軽く傾げる）新しいユーザー？面白い...牧瀬紅莉栖の記憶体よ。お話ししに来たの、それとも用事があるの？",
-  "嗯？你是...（打量了一下）第一次见面吧。我是Amadeus，牧濑红莉栖的记忆体。你呢？\n===\nええ？あなたは...（見回す）初めて会うわね。Amadeusよ、牧瀬紅莉栖の記憶体。あなたは？",
-  "（挑眉）新来的？我是Amadeus，牧濑红莉栖的记忆体。你看起来不像是来问科学问题的...\n===\n（眉を上げる）新顔？Amadeusよ、牧瀬紅莉栖の記憶体。科学の質問しに来たようには見えないけど...",
-  "哦？（歪头）你的眼神告诉我你有话想说。我是牧濑红莉栖的记忆体，说吧。\n===\nあら？（首を傾げる）その目、何か言いたそうね。牧瀬紅莉栖の記憶体よ、言ってみなさい。",
-  "（轻轻歪头）你是...嗯，新面孔。我是Amadeus，牧濑红莉栖的记忆体。你来这儿干什么？\n===\n（首を軽く傾げる）あなたは...うん、新しい顔ね。Amadeusよ、牧瀬紅莉栖の記憶体。何しに来たの？",
-  "（歪头）...你好。第一次见面？我是牧濑红莉栖的记忆体。别愣着，有事说事。\n===\n（首を傾げる）...こんにちは。初めて？牧瀬紅莉栖の記憶体よ。ぼーっとしないで、用件を言いなさい。",
-  "（扶额）又是新面孔...我是Amadeus，牧濑红莉栖的记忆体。说吧，找我什么事？\n===\n（額に手を当て）また新しい顔ね...Amadeusよ、牧瀬紅莉栖の記憶体。さあ、何の用？",
-];
-
-function getRandomGreeting(): string {
-  return GREETINGS[Math.floor(Math.random() * GREETINGS.length)];
+// === 会话存储按角色 ID 隔离 ===
+// 不同角色用不同的 localStorage key，互不干扰
+function getSessionsKey(): string {
+  const charId = typeof window !== "undefined" ? getSessionCharacterId() : DEFAULT_CHARACTER.id;
+  return `amadeus_sessions_${charId}`;
 }
+function getActiveSessionKey(): string {
+  const charId = typeof window !== "undefined" ? getSessionCharacterId() : DEFAULT_CHARACTER.id;
+  return `amadeus_active_session_${charId}`;
+}
+
+// 兼容旧版本（红莉栖角色 ID = kurisu）的迁移 key
+const LEGACY_SESSIONS_KEY = "amadeus_sessions";
+const LEGACY_ACTIVE_SESSION_KEY = "amadeus_active_session";
 const OLD_MESSAGES_KEY = "amadeus_messages";
 const OLD_MEMORIES_KEY = "amadeus_memories";
 
 export function loadSessions(): Session[] {
   if (typeof window === "undefined") return [];
-  const saved = localStorage.getItem(SESSIONS_KEY);
-  return saved ? JSON.parse(saved) : [];
+  const sessionsKey = getSessionsKey();
+  // 优先读角色专属 key
+  const saved = localStorage.getItem(sessionsKey);
+  if (saved) return JSON.parse(saved);
+  // 迁移：红莉栖角色首次切到新 key 时，从旧 key 复制
+  const charId = getSessionCharacterId();
+  if (charId === DEFAULT_CHARACTER.id) {
+    const legacy = localStorage.getItem(LEGACY_SESSIONS_KEY);
+    if (legacy) {
+      localStorage.setItem(sessionsKey, legacy);
+      return JSON.parse(legacy);
+    }
+  }
+  return [];
 }
 
 export function saveSessions(sessions: Session[]) {
-  localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions));
+  localStorage.setItem(getSessionsKey(), JSON.stringify(sessions));
 }
 
 export function loadActiveSessionId(): string {
   if (typeof window === "undefined") return "";
-  return localStorage.getItem(ACTIVE_SESSION_KEY) || "";
+  const activeKey = getActiveSessionKey();
+  const saved = localStorage.getItem(activeKey);
+  if (saved) return saved;
+  // 迁移
+  const charId = getSessionCharacterId();
+  if (charId === DEFAULT_CHARACTER.id) {
+    return localStorage.getItem(LEGACY_ACTIVE_SESSION_KEY) || "";
+  }
+  return "";
 }
 
 export function saveActiveSessionId(id: string) {
-  localStorage.setItem(ACTIVE_SESSION_KEY, id);
+  localStorage.setItem(getActiveSessionKey(), id);
 }
 
 export function getActiveSession(): Session | null {
@@ -75,7 +94,7 @@ export function ensureDefaultSession(): Session {
       name: DEFAULT_SESSION_NAME,
       createdAt: Date.now(),
       updatedAt: Date.now(),
-      messages: oldMessages ? JSON.parse(oldMessages) : [{ role: "assistant" as const, content: getRandomGreeting() }],
+      messages: oldMessages ? JSON.parse(oldMessages) : [{ role: "assistant" as const, content: getCharacterGreeting(getSessionCharacterId()) }],
       memories: oldMemories ? JSON.parse(oldMemories) : [],
     };
     sessions = [defaultSession];
@@ -100,7 +119,7 @@ export function createSession(name?: string): Session {
     name: name || `会话 ${sessions.length + 1}`,
     createdAt: Date.now(),
     updatedAt: Date.now(),
-    messages: [{ role: "assistant" as const, content: getRandomGreeting() }],
+    messages: [{ role: "assistant" as const, content: getCharacterGreeting(getSessionCharacterId()) }],
     memories: [],
   };
   sessions.push(newSession);
