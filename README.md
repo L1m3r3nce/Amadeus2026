@@ -6,7 +6,8 @@
 
 - 🎭 **多角色系统** - 三个角色（红莉栖/真帆/真由理），输入不同账号密码加载不同角色
 - 💬 **LLM 对话** - 支持 MiMo、DeepSeek 等 OpenAI 兼容 API，流式输出
-- 🔊 **TTS 语音** - 一键克隆音色，每个角色有独立声音
+- 📞 **语音通话** - 全屏通话界面，语音对话循环（说话→ASR识别→LLM回复→TTS播报），像打电话一样
+- 🔊 **TTS 语音** - 一键克隆音色，每个角色有独立声音，新角色自动克隆
 - 😊 **情绪系统** - 5 种情绪驱动 Live2D 表情
 - 📝 **会话管理** - 多会话、会话压缩、记忆提取，按角色隔离
 - 🖥️ **桌面应用** - 基于 Tauri，双击安装即用，无控制台黑框
@@ -74,6 +75,8 @@ npx tauri dev
 
 2. **语音合成** - 填入阿里云 API Key，点「一键克隆」即可
 
+3. **语音输入**（可选）- 填入 ASR API Key（可和对话 Key 相同），开启语音通话功能
+
 ## 语音音色
 
 每个角色内置了对应的音色样本，**只需填 API Key 即可一键克隆，无需手动去控制台操作**。
@@ -126,6 +129,7 @@ npx tauri build
 - **Live2D**: pixi.js + pixi-live2d-display
 - **LLM**: OpenAI 兼容 API
 - **TTS**: 阿里云 Qwen3-TTS-VC / CosyVoice / MiniMax
+- **ASR**: MiMo mimo-v2.5-asr（语音识别）
 
 ## 项目结构
 
@@ -135,11 +139,13 @@ amadeus/
 │   ├── app/               # Next.js 页面和 API 路由
 │   │   └── api/
 │   │       ├── chat/      # LLM 对话接口
+│   │       ├── asr/       # ASR 语音识别接口
 │   │       └── tts/       # TTS 合成 + 一键克隆接口
-│   ├── components/         # React 组件（Chat, Live2D, Settings, LoginForm）
+│   ├── components/         # React 组件（Chat, Live2D, Settings, VoiceCall, LoginForm）
 │   └── lib/               # 工具库
 │       ├── characters.ts   # 角色配置（多角色系统）
 │       ├── tts.ts          # TTS 合成 + 克隆
+│       ├── asr.ts          # ASR 语音识别配置
 │       ├── sessions.ts     # 会话管理（按角色隔离）
 │       ├── auth.ts         # 登录态 + 角色切换
 │       └── ...
@@ -176,7 +182,10 @@ A: 1) 确认已点「一键克隆」；2) 确认 TTS 开关已开启；3) 确认
 A: 常见原因：1) API Key 未填或无效；2) 阿里云账号未实名认证；3) 声音复刻服务未开通。可点「清除标记」后重试。
 
 ### Q: 切换角色后声音还是红莉栖的？
-A: 每个角色需要各自点一次「一键克隆」。如果已克隆还串音色，确认引擎是 Qwen3-TTS-VC（不要切到 CosyVoice）。
+A: 每个角色需要各自点一次「一键克隆」。如果已克隆还串音色，确认引擎是 Qwen3-TTS-VC（不要切到 CosyVoice）。v2.1 起新角色首次发消息会自动克隆，无需手动操作。
+
+### Q: 电话按钮看不到？
+A: 需要到设置→语音输入里打开开关，按钮才会出现。ASR API Key 可和对话 Key 用同一个。
 
 ### Q: 升级版本会丢聊天记录吗？
 A: 直接覆盖安装不会丢。不要卸载旧版。聊天记录存在 `%LOCALAPPDATA%\com.amadeus.kurisu\EBWebView\` 里。

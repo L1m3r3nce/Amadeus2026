@@ -47,3 +47,7 @@ rustup-init.exe
 sync.bat
 package.json
 package-lock.json
+
+# 个人草稿 / 重复文件（不传 GitHub）
+*-口播稿.md
+*.docx
