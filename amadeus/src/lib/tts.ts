@@ -277,6 +277,19 @@ export interface PlayableAudio {
   format?: string;
 }
 
+// === 当前正在播放的音频元素（供挂断/打断时立即停止） ===
+let activeAudioEl: HTMLAudioElement | null = null;
+
+/** 立即停止当前正在播放的 TTS 音频，并复位 Live2D 口型。供通话挂断等场景调用。 */
+export function stopCurrentAudio() {
+  if (activeAudioEl) {
+    try { activeAudioEl.pause(); } catch { /* 忽略 */ }
+    try { activeAudioEl.src = ""; } catch { /* 忽略 */ }
+    activeAudioEl = null;
+    window.dispatchEvent(new CustomEvent("amadeus-tts-end"));
+  }
+}
+
 function stripParentheses(text: string): string {
   return text.replace(/[（(][^）)]*[）)]/g, "").replace(/\s+/g, " ").trim();
 }
@@ -340,6 +353,21 @@ export async function synthesizeSpeech(
     if (!voiceId) {
       voiceId = loadClonedVoice();
       if (voiceId) console.log("[TTS] 使用克隆音色:", voiceId);
+    }
+    // 自动克隆：当前角色从未克隆过 → 首次 TTS 时自动触发一键克隆
+    // 克隆状态按角色 ID 隔离（amadeus_voice_cloned_<id>），红莉栖已克隆不会重复
+    // maho/may 等新角色首次发消息会自动克隆，之后不再触发
+    if (!voiceId && !isVoiceCloned()) {
+      console.log("[TTS] 当前角色未克隆音色，自动触发一键克隆...");
+      try {
+        const cloneResult = await cloneKurisuVoice(apiKey);
+        voiceId = cloneResult.voice;
+        setVoiceCloned(voiceId);
+        console.log("[TTS] 自动克隆成功，音色:", voiceId, "角色:", cloneResult.characterId);
+      } catch (e) {
+        console.error("[TTS] 自动克隆失败:", e instanceof Error ? e.message : e, "（请到设置→语音合成手动克隆，或检查阿里云 API Key）");
+        return null;
+      }
     }
   } else if (provider === "minimax") {
     apiKey = loadMiniMaxAPIKey();
@@ -424,6 +452,9 @@ export function playAudio(audioData: PlayableAudio): Promise<void> {
     let audioCtx: AudioContext | null = null;
     let analyser: AnalyserNode | null = null;
 
+    // 记录当前播放元素，供 stopCurrentAudio 打断
+    activeAudioEl = audio;
+
     try {
       audioCtx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
       analyser = audioCtx.createAnalyser();
@@ -447,6 +478,7 @@ export function playAudio(audioData: PlayableAudio): Promise<void> {
     const cleanup = () => {
       if (cleaned) return;
       cleaned = true;
+      if (activeAudioEl === audio) activeAudioEl = null;
       try { audio.pause(); } catch { /* 忽略 */ }
       try { audio.src = ""; } catch { /* 忽略 */ }
       try { audio.load(); } catch { /* 忽略 */ }

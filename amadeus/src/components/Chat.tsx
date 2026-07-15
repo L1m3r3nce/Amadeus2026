@@ -14,6 +14,8 @@ import {
 } from "@/lib/tts";
 import Live2D from "./Live2D";
 import SpritePlayer from "./SpritePlayer";
+import VoiceCall from "./VoiceCall";
+import { loadAsrEnabled } from "@/lib/asr";
 import getCaretCoordinates from "textarea-caret";
 import { parseMessage, getTTSText } from "@/lib/message-parser";
 import { dispatchEmotion } from "@/lib/emotion";
@@ -51,6 +53,9 @@ export default function Chat() {
   const [ttsConfig, setTTSConfig] = useState<TTSConfig>(loadTTSConfig);
   const [playingMessageIndex, setPlayingMessageIndex] = useState<number | null>(null);
   const [bgmEnabled, setBgmEnabled] = useState(true);
+  // 语音通话
+  const [callOpen, setCallOpen] = useState(false);
+  const [asrEnabled, setAsrEnabled] = useState(loadAsrEnabled);
   // Live2D 立绘尺寸 + 背景图缩放：跟随窗口高度同步缩放（基准 900 高）
   const [liveSize, setLiveSize] = useState({ width: 500, height: 900 });
   const [scale, setScale] = useState(1);
@@ -99,11 +104,25 @@ export default function Chat() {
     const handleSettingsChange = () => {
       setConfig(loadModelConfig());
       setTTSConfig(loadTTSConfig());
+      setAsrEnabled(loadAsrEnabled());
       const saved = localStorage.getItem("amadeus_bgm_enabled");
       setBgmEnabled(saved !== null ? saved === "true" : true);
     };
     window.addEventListener("amadeus-settings-change", handleSettingsChange);
     return () => window.removeEventListener("amadeus-settings-change", handleSettingsChange);
+  }, []);
+
+  // 语音通话结束后，同步最新会话消息到当前界面
+  useEffect(() => {
+    const handleSessionUpdated = () => {
+      const s = getActiveSession();
+      if (s) {
+        setMessages(s.messages);
+        setMemories(s.memories);
+      }
+    };
+    window.addEventListener("amadeus-session-updated", handleSessionUpdated);
+    return () => window.removeEventListener("amadeus-session-updated", handleSessionUpdated);
   }, []);
   useEffect(() => {
     loadingRef.current = loading;
@@ -516,6 +535,17 @@ export default function Chat() {
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
           </svg>
         </button>
+        {asrEnabled && (
+          <button
+            onClick={() => setCallOpen(true)}
+            className="text-zinc-400 hover:text-white transition-colors p-2 absolute right-16 top-4"
+            title="语音通话"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 0 0 2.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 0 1-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 0 0-1.091-.852H4.5A2.25 2.25 0 0 0 2.25 4.5v2.25Z" />
+            </svg>
+          </button>
+        )}
       </header>
 
       {/* 聊天面板 - 消息+输入合并 */}
@@ -645,6 +675,13 @@ export default function Chat() {
         setConfig(loadModelConfig());
         setTTSConfig(loadTTSConfig());
       }} />
+
+      <VoiceCall
+        open={callOpen}
+        onClose={() => setCallOpen(false)}
+        sessionId={activeSession?.id || ""}
+        character={character}
+      />
     </div>
   );
 }

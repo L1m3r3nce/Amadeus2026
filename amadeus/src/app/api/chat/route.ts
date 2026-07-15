@@ -73,7 +73,8 @@ export async function POST(request: Request) {
     ];
 
     // 诊断：打印实际发送给 LLM 的 payload 大小
-    const llmPayload = JSON.stringify({ model, messages, max_tokens: 512 });
+    // stream:true → 流式，首字 1-2s 到达即开始逐字转发，体感远快于非流式（要等整段生成完）
+    const llmPayload = JSON.stringify({ model, messages, max_tokens: 512, stream: true });
     const payloadBytes = Buffer.byteLength(llmPayload, "utf8");
     const systemLen = (personality || DEFAULT_PERSONALITY).length;
     const historyCount = normalHistory.length;
@@ -106,22 +107,67 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: errMsg }, { status: 502 });
     }
 
-    // 非流式：上游返回完整 JSON，我们取出 reply 后用 SSE 格式一次性发给前端
-    // 前端 Chat.tsx 仍然是 SSE 读取逻辑，不用改
-    // 文字会一次性出现（不逐字），但总延迟远小于 stream 模式（MiMo stream 走慢队列）
-    const data = await res.json();
-    const reply: string = data.choices?.[0]?.message?.content || "无回复";
-    const totalMs = Date.now() - t0;
-    console.log(`[API] LLM 非流式响应耗时: ${totalMs}ms, 总字符数: ${reply.length}, messages 条数: ${messages.length}`);
-    console.log(`[API] fetch返回→JSON解析完成: ${totalMs - fetchReturnMs}ms`);
-
+    // 流式转发：读上游 SSE，抽 delta.content，重封简化 SSE 逐字发给前端
+    // 前端 Chat.tsx 的 SSE reader 逻辑能正确处理逐字 delta
     const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    let firstTokenMs = 0;
+    let totalChars = 0;
+
     const stream = new ReadableStream<Uint8Array>({
-      start(controller) {
-        // 一次性把完整回复作为单个 SSE 事件发给前端
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content: reply })}\n\n`));
-        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-        controller.close();
+      async start(controller) {
+        const reader = res.body!.getReader();
+        let buffer = "";
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            // SSE 事件以空行分隔，但上游每行一个 data:，按行切更稳
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed.startsWith("data:")) continue;
+              const payload = trimmed.slice(5).trim();
+              if (payload === "[DONE]") continue;
+              try {
+                const parsed = JSON.parse(payload);
+                const delta = parsed.choices?.[0]?.delta?.content;
+                if (delta) {
+                  if (firstTokenMs === 0) {
+                    firstTokenMs = Date.now() - t0;
+                    console.log(`[API] 首字到达: ${firstTokenMs}ms (fetch返回→首字: ${firstTokenMs - fetchReturnMs}ms)`);
+                  }
+                  totalChars += delta.length;
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content: delta })}\n\n`));
+                }
+              } catch { /* 忽略解析失败的单行 */ }
+            }
+          }
+          // flush 残留 buffer
+          const tail = buffer.trim();
+          if (tail.startsWith("data:")) {
+            const payload = tail.slice(5).trim();
+            if (payload && payload !== "[DONE]") {
+              try {
+                const parsed = JSON.parse(payload);
+                const delta = parsed.choices?.[0]?.delta?.content;
+                if (delta) {
+                  totalChars += delta.length;
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content: delta })}\n\n`));
+                }
+              } catch { /* 忽略 */ }
+            }
+          }
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          controller.close();
+          const totalMs = Date.now() - t0;
+          console.log(`[API] 流式完成: 总耗时 ${totalMs}ms | 首字 ${firstTokenMs}ms | 字符数 ${totalChars} | messages ${messages.length}条`);
+        } catch (e) {
+          console.error("[API] 流式读取异常:", e);
+          try { controller.enqueue(encoder.encode("data: [DONE]\n\n")); controller.close(); } catch { /* 已关闭 */ }
+        }
       },
     });
 

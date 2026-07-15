@@ -17,6 +17,7 @@ import {
 import { setSessionLoggedIn } from "@/lib/auth";
 import { getSessionCharacterId } from "@/lib/auth";
 import { getCharacterById } from "@/lib/characters";
+import { loadAsrConfig, saveAsrConfig, AsrConfig } from "@/lib/asr";
 
 export interface ModelConfig {
   provider: string;
@@ -72,6 +73,7 @@ interface SettingsProps {
 const MENU_ITEMS = [
   { id: "chat-model", label: "Chat模型" },
   { id: "tts", label: "语音合成" },
+  { id: "voice", label: "语音输入" },
   { id: "memory", label: "会话管理" },
   { id: "general", label: "通用设置" },
 ];
@@ -113,6 +115,7 @@ export default function Settings({ open, onClose, onSave }: SettingsProps) {
     const saved = localStorage.getItem("amadeus_bgm_enabled");
     return saved !== null ? saved === "true" : true;
   });
+  const [asrCfg, setAsrCfg] = useState<AsrConfig>(loadAsrConfig);
 
   useEffect(() => {
     setConfig(loadModelConfig());
@@ -127,6 +130,7 @@ export default function Settings({ open, onClose, onSave }: SettingsProps) {
     setTTSEngine(loadTTSEngine());
     setCustomTTS(loadCustomTTS());
     setVoiceClonedState(isVoiceCloned());
+    setAsrCfg(loadAsrConfig());
   }, [open]);
 
   if (!open) return null;
@@ -238,7 +242,7 @@ export default function Settings({ open, onClose, onSave }: SettingsProps) {
         <div className="flex-1 flex flex-col">
           <div className="flex items-center justify-between p-4 border-b border-zinc-800">
             <h2 className="text-lg font-mono text-[#F2B03A]">
-              {activeTab === "chat-model" ? "Chat模型" : activeTab === "tts" ? "语音合成" : activeTab === "memory" ? "会话管理" : "通用设置"}
+              {activeTab === "chat-model" ? "Chat模型" : activeTab === "tts" ? "语音合成" : activeTab === "voice" ? "语音输入" : activeTab === "memory" ? "会话管理" : "通用设置"}
             </h2>
             <div className="flex gap-2">
               <button
@@ -936,6 +940,112 @@ export default function Settings({ open, onClose, onSave }: SettingsProps) {
                     </div>
                   </div>
                 )}
+              </div>
+            )}
+
+            {activeTab === "voice" && (
+              <div className="space-y-5">
+                {/* 启用开关 */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-mono text-zinc-200">启用语音通话</h3>
+                    <p className="text-xs text-zinc-600 mt-1">开启后，聊天界面右上角出现电话按钮，可像微信电话一样和{character.name}语音沟通。</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      const updated = { ...asrCfg, enabled: !asrCfg.enabled };
+                      setAsrCfg(updated);
+                      saveAsrConfig(updated);
+                      notifyChange();
+                      showToast(updated.enabled ? "语音通话已开启" : "语音通话已关闭");
+                    }}
+                    className={`w-12 h-6 rounded-full transition-colors relative ${asrCfg.enabled ? "bg-[#D18B24]" : "bg-zinc-700"}`}
+                  >
+                    <div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 transition-transform ${asrCfg.enabled ? "translate-x-6" : "translate-x-0.5"}`} />
+                  </button>
+                </div>
+
+                {/* 接口地址 */}
+                <div>
+                  <label className="block text-xs text-zinc-400 mb-1 font-mono">ASR 接口地址</label>
+                  <input
+                    type="text"
+                    value={asrCfg.endpoint}
+                    onChange={(e) => {
+                      const updated = { ...asrCfg, endpoint: e.target.value };
+                      setAsrCfg(updated);
+                    }}
+                    onBlur={() => {
+                      saveAsrConfig(asrCfg);
+                      notifyChange();
+                    }}
+                    placeholder="https://api.xiaomimimo.com/v1"
+                    className="w-full bg-zinc-800 border border-zinc-600 rounded-lg px-3 py-2 text-sm font-mono text-white placeholder-zinc-500"
+                  />
+                  <p className="text-xs text-zinc-600 mt-1">MiMo ASR 走 OpenAI 兼容的 /chat/completions，填到 /v1 即可。</p>
+                </div>
+
+                {/* 模型 */}
+                <div>
+                  <label className="block text-xs text-zinc-400 mb-1 font-mono">ASR 模型</label>
+                  <input
+                    type="text"
+                    value={asrCfg.model}
+                    onChange={(e) => {
+                      const updated = { ...asrCfg, model: e.target.value };
+                      setAsrCfg(updated);
+                    }}
+                    onBlur={() => {
+                      saveAsrConfig(asrCfg);
+                      notifyChange();
+                    }}
+                    placeholder="mimo-v2.5-asr"
+                    className="w-full bg-zinc-800 border border-zinc-600 rounded-lg px-3 py-2 text-sm font-mono text-white placeholder-zinc-500"
+                  />
+                  <p className="text-xs text-zinc-600 mt-1">默认 mimo-v2.5-asr（中英双语 + 方言 + 多说话人）。</p>
+                </div>
+
+                {/* API Key */}
+                <div>
+                  <label className="block text-xs text-zinc-400 mb-1 font-mono">ASR API Key</label>
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <input
+                        type={showTTSKeys.aliyun ? "text" : "password"}
+                        value={asrCfg.apiKey}
+                        onChange={(e) => {
+                          setAsrCfg({ ...asrCfg, apiKey: e.target.value });
+                        }}
+                        autoComplete="off"
+                        name="amadeus-asr-key"
+                        placeholder="留空则复用上方「Chat模型」的 Key"
+                        className="w-full bg-zinc-800 border border-zinc-600 rounded-lg px-3 py-2 text-sm font-mono text-white placeholder-zinc-500 pr-16"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowTTSKeys((s) => ({ ...s, aliyun: !s.aliyun }))}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-zinc-400 hover:text-white"
+                      >
+                        {showTTSKeys.aliyun ? "隐藏" : "显示"}
+                      </button>
+                    </div>
+                    <button
+                      onClick={() => {
+                        const updated = { ...asrCfg, apiKey: asrCfg.apiKey.trim() };
+                        setAsrCfg(updated);
+                        saveAsrConfig(updated);
+                        notifyChange();
+                        showToast(updated.apiKey ? `ASR Key 已保存（${updated.apiKey.length} 字符）` : "已清空，将复用对话 Key");
+                      }}
+                      className="px-3 py-2 bg-[#D18B24] hover:bg-[#E0551E] text-white rounded-lg font-mono text-sm whitespace-nowrap"
+                    >
+                      保存
+                    </button>
+                  </div>
+                  <p className="text-xs text-zinc-600 mt-1">
+                    MiMo 的 ASR Key 可能与对话 Key 不同。若通话时提示「鉴权失败」，请到 platform.xiaomimimo.com 申请 ASR Key 后填这里；留空则复用对话 Key。
+                  </p>
+                </div>
               </div>
             )}
 
