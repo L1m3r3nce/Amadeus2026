@@ -202,8 +202,15 @@ export async function compressSessionMessages(
   if (!config.apiKey) return -2;
 
   // 构造压缩用对话文本
+  // 图片消息只加 [图片] 占位符，不把 base64 发给压缩 LLM（避免 token 浪费 + 截断乱码）
   const dialogText = toCompress
-    .map((m) => `${m.role === "user" ? "用户" : "Amadeus"}: ${m.content.slice(0, 500)}`) // 每条截断防超长
+    .map((m) => {
+      let text = m.content.slice(0, 500);
+      if (m.imageUrl) {
+        text = `[发送了一张图片] ${text}`;
+      }
+      return `${m.role === "user" ? "用户" : "Amadeus"}: ${text}`;
+    })
     .join("\n");
 
   try {

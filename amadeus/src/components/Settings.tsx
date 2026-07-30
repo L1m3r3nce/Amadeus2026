@@ -18,6 +18,94 @@ import { setSessionLoggedIn } from "@/lib/auth";
 import { getSessionCharacterId } from "@/lib/auth";
 import { getCharacterById } from "@/lib/characters";
 import { loadAsrConfig, saveAsrConfig, AsrConfig } from "@/lib/asr";
+import { parseMessage } from "@/lib/message-parser";
+
+/** 把时间戳格式化成 YYYY-MM-DD HH:mm:ss */
+function formatTime(ts: number): string {
+  const d = new Date(ts);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+/** 把会话导出为 TXT 文本（含完整聊天记录），弹出系统保存对话框让用户选位置 */
+async function exportSessionToTxt(session: Session, characterName: string): Promise<{ saved: boolean; path?: string; cancelled?: boolean }> {
+  if (typeof window === "undefined") return { saved: false };
+
+  const lines: string[] = [];
+  lines.push("========================================");
+  lines.push("  Amadeus 聊天记录");
+  lines.push("========================================");
+  lines.push(`会话名称：${session.name}`);
+  lines.push(`创建时间：${formatTime(session.createdAt)}`);
+  lines.push(`最后更新：${formatTime(session.updatedAt)}`);
+  lines.push(`消息总数：${session.messages.length} 条`);
+  lines.push("");
+  lines.push("========================================");
+  lines.push("");
+  lines.push("");
+
+  for (const msg of session.messages) {
+    const speaker = msg.role === "user" ? "我" : characterName;
+    let content: string;
+    if (msg.role === "assistant") {
+      const parsed = parseMessage(msg.content);
+      content = parsed.zh;
+    } else {
+      content = msg.content;
+    }
+    const prefix = (msg as { isSummary?: boolean }).isSummary ? "[上下文摘要] " : "";
+    lines.push(`【${speaker}】`);
+    lines.push(`${prefix}${content}`);
+    if (msg.imageUrl) lines.push("[图片]");
+    lines.push("");
+    lines.push("----------------------------------------");
+    lines.push("");
+  }
+
+  lines.push("");
+  lines.push("========================================");
+  lines.push(`导出于 ${formatTime(Date.now())}`);
+  lines.push("========================================");
+
+  const BOM = "\uFEFF";
+  const text = BOM + lines.join("\n");
+
+  const safeName = session.name.replace(/[\\/:*?"<>|]/g, "_");
+  const exportTime = formatTime(Date.now()).replace(/[: ]/g, "-");
+  const txtFilename = `${safeName}_${exportTime}.txt`;
+
+  // === 用 showSaveFilePicker 保存 TXT ===
+  const w2 = window as unknown as { showSaveFilePicker?: (opts: unknown) => Promise<FileSystemFileHandle> };
+  if (typeof w2.showSaveFilePicker === "function") {
+    try {
+      const handle = await w2.showSaveFilePicker({
+        suggestedName: txtFilename,
+        types: [{ description: "文本文件", accept: { "text/plain": [".txt"] } }],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(text);
+      await writable.close();
+      return { saved: true, path: handle.name };
+    } catch (e) {
+      if (e instanceof DOMException && (e.name === "AbortError" || e.name === "NotAllowedError")) {
+        return { saved: false, cancelled: true };
+      }
+      console.warn("[Export] showSaveFilePicker failed, fallback to Blob download:", e);
+    }
+  }
+
+  // 回退：Blob 下载
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = txtFilename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return { saved: true, path: "下载目录" };
+}
 
 export interface ModelConfig {
   provider: string;
@@ -108,6 +196,7 @@ export default function Settings({ open, onClose, onSave }: SettingsProps) {
   const character = getCharacterById(getSessionCharacterId());
 
   const [toast, setToast] = useState<string | null>(null);
+
   const [cloning, setCloning] = useState(false);
   const [voiceCloned, setVoiceClonedState] = useState(false);
   const [bgmEnabled, setBgmEnabled] = useState(() => {
@@ -210,6 +299,21 @@ export default function Settings({ open, onClose, onSave }: SettingsProps) {
       showToast("压缩失败");
     } finally {
       setCompressingId(null);
+    }
+  };
+
+  const handleExportSession = async (session: Session) => {
+    try {
+      const result = await exportSessionToTxt(session, character.name);
+      if (result.cancelled) {
+        showToast("已取消导出");
+      } else if (result.saved) {
+        showToast(`已导出 ${session.messages.length} 条消息 → ${result.path || "本地"}`);
+      } else {
+        showToast("导出失败");
+      }
+    } catch (e) {
+      showToast(`导出失败：${e instanceof Error ? e.message : "未知错误"}`);
     }
   };
 
@@ -897,6 +1001,16 @@ export default function Settings({ open, onClose, onSave }: SettingsProps) {
                           )}
                         </span>
                         <div className="flex items-center gap-2">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleExportSession(session); }}
+                            className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 font-mono transition-colors"
+                            title="导出为 TXT 文件保存到本地"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                            </svg>
+                            导出 TXT
+                          </button>
                           {session.messages.length > COMPRESS_THRESHOLD && (
                             <button
                               onClick={(e) => { e.stopPropagation(); handleCompressSession(session.id); }}
