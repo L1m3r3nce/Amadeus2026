@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "2.1.0"
+version = "2.2.0"
 description = "Amadeus - 命运石之门数字伴侣（多角色）"
 authors = ["you"]
 license = ""
@@ -20,4 +20,5 @@ tauri-build = { version = "2.6.3", features = [] }
 [dependencies]
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
-tauri = { version = "2.11.3", features = [] }
+tauri = { version = "2.11.3", features = ["tray-icon"] }
+tauri-plugin-fs = "2"

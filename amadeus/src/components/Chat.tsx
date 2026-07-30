@@ -21,6 +21,7 @@ import { parseMessage, getTTSText } from "@/lib/message-parser";
 import { dispatchEmotion } from "@/lib/emotion";
 import { getSessionCharacterId } from "@/lib/auth";
 import { getCharacterById } from "@/lib/characters";
+import { compressImage } from "@/lib/image-compress";
 
 interface Message {
   role: "user" | "assistant";
@@ -29,7 +30,7 @@ interface Message {
 }
 
 // 支持图片的多模态模型
-const MULTIMODAL_MODELS = ["mimo-v2.5", "gpt-4o", "gpt-4-turbo", "claude-sonnet-4-20250514", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"];
+const MULTIMODAL_MODELS = ["mimo-v2.5", "gpt-4o", "gpt-4-turbo", "claude-sonnet-20250514", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"];
 
 export default function Chat() {
   // 当前登录角色（组件挂载时读取一次，本会话不变）
@@ -56,6 +57,8 @@ export default function Chat() {
   // 语音通话
   const [callOpen, setCallOpen] = useState(false);
   const [asrEnabled, setAsrEnabled] = useState(loadAsrEnabled);
+  // 加号菜单
+  const [plusMenuOpen, setPlusMenuOpen] = useState(false);
   // Live2D 立绘尺寸 + 背景图缩放：跟随窗口高度同步缩放（基准 900 高）
   const [liveSize, setLiveSize] = useState({ width: 500, height: 900 });
   const [scale, setScale] = useState(1);
@@ -300,19 +303,42 @@ export default function Chat() {
     return () => clearInterval(interval);
   }, []);
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleImageUpload = async (file: File | Blob) => {
+    try {
+      const compressed = await compressImage(file);
+      setImagePreview(compressed.dataUrl);
+      setImageBase64(compressed.base64);
+    } catch (e) {
+      console.error("[ImageUpload] 压缩失败:", e);
+    }
+  };
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const result = event.target?.result as string;
-      setImagePreview(result);
-      // 转换为 base64（去掉 data:image/xxx;base64, 前缀）
-      const base64 = result.split(",")[1];
-      setImageBase64(base64);
-    };
-    reader.readAsDataURL(file);
+  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleImageUpload(file);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files?.[0];
+    if (file && file.type.startsWith("image/")) {
+      handleImageUpload(file);
+    }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) {
+          handleImageUpload(file);
+          e.preventDefault();
+          break;
+        }
+      }
+    }
   };
 
   const removeImage = () => {
@@ -338,9 +364,11 @@ export default function Chat() {
     }
 
     const messageToSend = input.trim();
-    const userMessage: Message = { role: "user", content: messageToSend, imageUrl: imagePreview || undefined };
+    // 图片直接用 data URL（不存硬盘）
+    const imageUrlForMsg = imagePreview || undefined;
+    const userMessage: Message = { role: "user", content: messageToSend, imageUrl: imageUrlForMsg };
     setMessages((prev) => [...prev, userMessage]);
-    const imageToSend = imageBase64;
+    const imageToSend = imageBase64; // 发 LLM 的 base64（已有）
     setInput("");
     setTimeout(updateCursorPosition, 0);
     setImagePreview(null);
@@ -359,6 +387,20 @@ export default function Chat() {
         ? messages.slice(-MAX_HISTORY)
         : messages;
 
+      // 异步解析历史消息中的图片（现在都是 data URL，直接用）
+      const resolvedHistory = recentMessages.map((m) => {
+        if (m.imageUrl) {
+          return {
+            role: m.role,
+            content: [
+              { type: "text", text: m.content },
+              { type: "image_url", image_url: { url: m.imageUrl } },
+            ],
+          };
+        }
+        return { role: m.role, content: m.content };
+      });
+
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -366,18 +408,7 @@ export default function Chat() {
           message: messageToSend,
           image: imageToSend,
           personality: character.personality,
-          history: recentMessages.map((m) => {
-            if (m.imageUrl) {
-              return {
-                role: m.role,
-                content: [
-                  { type: "text", text: m.content },
-                  { type: "image_url", image_url: { url: m.imageUrl } },
-                ],
-              };
-            }
-            return { role: m.role, content: m.content };
-          }),
+          history: resolvedHistory,
           memories: memories.map((m) => ({ content: m.content, type: m.type })),
           ...currentConfig,
         }),
@@ -560,6 +591,8 @@ export default function Chat() {
           backgroundSize: '100% 100%',
           backgroundPosition: 'left bottom',
         }}
+        onDrop={handleDrop}
+        onDragOver={(e) => e.preventDefault()}
       >
         {/* 顶部留白 */}
         <div style={{ height: '20px', flexShrink: 0 }} />
@@ -608,6 +641,27 @@ export default function Chat() {
 
         {/* 输入区 */}
         <div className="relative flex flex-col justify-end" style={{ height: '70px', paddingBottom: '20px' }}>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleFileInputChange}
+            className="hidden"
+          />
+          {/* 图片预览 */}
+          {imagePreview && (
+            <div className="absolute bottom-16 left-4 flex items-end gap-2 z-10">
+              <div className="relative">
+                <img src={imagePreview} alt="预览" className="w-20 h-20 object-cover rounded-lg border border-zinc-600" />
+                <button
+                  onClick={removeImage}
+                  className="absolute -top-2 -right-2 w-5 h-5 bg-red-600 hover:bg-red-500 text-white rounded-full flex items-center justify-center text-xs"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+          )}
           <div className="relative">
             <textarea
               ref={textareaRef}
@@ -617,6 +671,7 @@ export default function Chat() {
             onFocus={() => updateCursorPosition()}
             onClick={() => updateCursorPosition()}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
+            onPaste={handlePaste}
               className="w-full bg-transparent text-zinc-100 font-mono resize-none outline-none text-center"
               style={{
                 fontSize: '1.1rem',
@@ -628,6 +683,16 @@ export default function Chat() {
                 maxHeight: '100px',
               }}
             />
+            {/* 图片按钮（左下角） */}
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="absolute left-4 bottom-1 w-7 h-7 flex items-center justify-center rounded-full bg-zinc-700/80 text-zinc-300 hover:bg-zinc-600 hover:text-white transition-all"
+              title="发送图片"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                <path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" />
+              </svg>
+            </button>
             <SpritePlayer
               src="/ring.png"
               rows={12}

@@ -21,6 +21,8 @@ export default function LoginForm() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
+  const [rememberMe, setRememberMe] = useState(false);
+  const [savedAccounts, setSavedAccounts] = useState<Record<string, string>>({});
   const bgmRef = useRef<HTMLAudioElement | null>(null);
   // 登录界面整体同步缩放：以 900px 高度为基准，scale 随窗口高度变化
   // 最外层 div 设置 fontSize = baseFont * scale，内部所有 em 单位会跟着按比例缩放
@@ -50,6 +52,25 @@ export default function LoginForm() {
     // 不检查 localStorage——刷新必须重新登录
   }, [router]);
 
+  // 读取所有保存的账号密码，自动填充最近一次登录的
+  useEffect(() => {
+    const saved = localStorage.getItem("amadeus_saved_logins");
+    if (saved) {
+      try {
+        const data = JSON.parse(saved);
+        const accounts = data.accounts || {};
+        setSavedAccounts(accounts);
+        // 自动填充最近登录的账号
+        const last = data.lastAccount;
+        if (last && accounts[last]) {
+          setUsername(last);
+          setPassword(accounts[last]);
+          setRememberMe(true);
+        }
+      } catch { /* 忽略损坏的数据 */ }
+    }
+  }, []);
+
   const handleLogin = () => {
     if (!username.trim()) {
       setErrorMsg("请输入 USER ID");
@@ -68,6 +89,19 @@ export default function LoginForm() {
     // 校验通过，存内存会话登录态 + 角色 ID
     setSessionLoggedIn(true);
     setSessionCharacterId(character.id);
+    // 记住账号密码：勾选则保存到 localStorage（支持多账号），没勾则删除当前账号
+    const savedRaw = localStorage.getItem("amadeus_saved_logins");
+    let data: { accounts: Record<string, string>; lastAccount: string } = { accounts: {}, lastAccount: "" };
+    try { data = JSON.parse(savedRaw || "{}"); } catch { /* 用默认 */ }
+    if (!data.accounts) data.accounts = {};
+    if (rememberMe) {
+      data.accounts[username.trim()] = password.trim();
+    } else {
+      delete data.accounts[username.trim()];
+    }
+    data.lastAccount = username.trim();
+    localStorage.setItem("amadeus_saved_logins", JSON.stringify(data));
+    setSavedAccounts(data.accounts);
     router.push("/");
   };
 
@@ -160,6 +194,64 @@ export default function LoginForm() {
               style={inputStyle}
             />
           </div>
+          {/* 记住账号密码复选框 */}
+          <label
+            style={{
+              alignSelf: "flex-end",
+              marginTop: "0.8em",
+              display: "flex",
+              alignItems: "center",
+              gap: "0.5em",
+              cursor: "pointer",
+              color: "#F2B03A",
+              fontFamily: "'Consolas', 'monospace'",
+              fontSize: "1.1em",
+              letterSpacing: "1px",
+              textShadow: "0 0 6px rgba(0,0,0,0.9)",
+              userSelect: "none",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+              style={{
+                width: "1.1em",
+                height: "1.1em",
+                accentColor: "#D18B24",
+                cursor: "pointer",
+              }}
+            />
+            记住账号密码
+          </label>
+          {/* 已保存的账号快速选择：2个以上才显示 */}
+          {Object.keys(savedAccounts).length > 1 && (
+            <div style={{ alignSelf: "flex-end", marginTop: "0.5em", display: "flex", gap: "0.5em", flexWrap: "wrap", justifyContent: "flex-end" }}>
+              {Object.keys(savedAccounts).map((acct) => (
+                <button
+                  key={acct}
+                  onClick={() => {
+                    setUsername(acct);
+                    setPassword(savedAccounts[acct]);
+                    setRememberMe(true);
+                  }}
+                  style={{
+                    background: username === acct ? "#D18B24" : "rgba(0,0,0,0.6)",
+                    border: "1px solid #D18B24",
+                    color: "#F2B03A",
+                    padding: "0.2em 0.8em",
+                    fontFamily: "'Consolas', 'monospace'",
+                    fontSize: "0.95em",
+                    cursor: "pointer",
+                    borderRadius: "3px",
+                    textShadow: "0 0 4px rgba(0,0,0,0.9)",
+                  }}
+                >
+                  {acct}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <button

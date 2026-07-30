@@ -3,7 +3,11 @@ use std::sync::Mutex;
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
 use std::path::PathBuf;
-use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
+    Manager, WebviewUrl, WebviewWindowBuilder,
+};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -67,6 +71,7 @@ fn find_standalone_dir(app: &tauri::App) -> Option<PathBuf> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_fs::init())
         .manage(AppState {
             node_process: Mutex::new(None),
         })
@@ -133,20 +138,62 @@ pub fn run() {
                 .build()?;
 
             println!("[Amadeus] 应用窗口已创建，加载: {}", server_url);
+
+            // 创建系统托盘（点叉号隐藏到托盘，托盘菜单提供退出）
+            let show_item = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "退出 Amadeus", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+
+            TrayIconBuilder::with_id("main-tray")
+                .icon(app.default_window_icon().unwrap().clone())
+                .menu(&menu)
+                .tooltip("Amadeus")
+                .on_menu_event(|app, event| {
+                    match event.id.as_ref() {
+                        "show" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        "quit" => {
+                            // 杀 sidecar 后退出
+                            let state: tauri::State<AppState> = app.state();
+                            let mut guard = state.node_process.lock().unwrap();
+                            if let Some(mut child) = guard.take() {
+                                let _ = child.kill();
+                                let _ = child.wait();
+                                println!("[Amadeus] Node.js sidecar 已终止");
+                            }
+                            app.exit(0);
+                        }
+                        _ => {}
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click { button: MouseButton::Left, .. } = event {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            if window.is_visible().unwrap_or(false) {
+                                let _ = window.hide();
+                            } else {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                    }
+                })
+                .build(app)?;
+
             Ok(())
         })
         .on_window_event(|window, event| {
             if window.label() == "main" {
-                if let tauri::WindowEvent::CloseRequested { .. } = event {
-                    println!("[Amadeus] 主窗口关闭，清理 sidecar");
-                    let app = window.app_handle();
-                    let state: tauri::State<AppState> = app.state();
-                    let mut guard = state.node_process.lock().unwrap();
-                    if let Some(mut child) = guard.take() {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        println!("[Amadeus] Node.js sidecar 已终止");
-                    }
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    // 点叉号不退出，隐藏到系统托盘
+                    println!("[Amadeus] 最小化到系统托盘");
+                    let _ = window.hide();
+                    api.prevent_close();
                 }
             }
         })
