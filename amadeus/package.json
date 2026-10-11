@@ -10,6 +10,7 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@tauri-apps/plugin-fs": "^2.7.0",
     "next": "16.2.9",
     "pixi-live2d-display": "^0.5.0-beta",
     "pixi.js": "^7.4.3",

@@ -32,6 +32,15 @@ struct AppState {
     node_process: Mutex<Option<Child>>,
 }
 
+/// 生成随机令牌（32 字节 → 64 个十六进制字符），作为本地服务的访问凭证。
+/// 每次启动都重新生成：env 传给 Node 服务（AMADEUS_TOKEN），
+/// 同时附在 webview 首载 URL 上（?token=...），由 Next 代理层换发 httpOnly cookie。
+fn generate_token() -> String {
+    let mut buf = [0u8; 32];
+    getrandom::fill(&mut buf).expect("无法生成随机 token");
+    buf.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
 /// 轮询端口直到可用，最多等 timeout_secs 秒
 fn wait_for_port(host: &str, port: u16, timeout_secs: u64) -> bool {
     let start = Instant::now();
@@ -105,6 +114,9 @@ pub fn run() {
                 let mut cmd = Command::new(&node_path);
                 cmd.arg(&start_script);
                 cmd.current_dir(&standalone_dir);
+                // 本地服务访问令牌：env 传给 Node 侧代理层做鉴权
+                let token = generate_token();
+                cmd.env("AMADEUS_TOKEN", &token);
                 #[cfg(windows)]
                 {
                     cmd.creation_flags(CREATE_NO_WINDOW);
@@ -124,7 +136,8 @@ pub fn run() {
                     )));
                 }
                 println!("[Amadeus] Next.js server 已就绪！");
-                info.url
+                // 首载 URL 携带 token，Node 代理层校验后换发 httpOnly cookie 并重定向到干净 URL
+                format!("{}?token={}", info.url, token)
             };
 
             // 创建主窗口
